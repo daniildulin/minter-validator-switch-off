@@ -1,0 +1,19 @@
+[Unit]
+Description=Minter Validator Switch Off Service
+Wants=network-online.target
+After=network.target network-online.target
+
+[Service]
+Type=simple
+KillMode=process
+TimeoutStartSec=10
+Restart=always
+RestartSec=15s
+WorkingDirectory=/opt/minter/minter-validator-switch-off
+ExecStart=/opt/minter/minter-validator-switch-off/switch
+
+User=www-user
+Group=www-user
+
+[Install]
+WantedBy=multi-user.target
