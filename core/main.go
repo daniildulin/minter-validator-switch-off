@@ -167,7 +167,7 @@ func (s MinterValidatorSwitchOffService) checkMissedBlocks(clients []*api.Api) b
 	}
 
 	for _, client := range clients {
-		r, err := client.MissedBlocks(os.Getenv("PUB_KEY"), 0)
+		r, err := client.MissedBlocks(os.Getenv("PUB_KEY"))
 		if err != nil {
 			fmt.Println(err)
 		} else {
