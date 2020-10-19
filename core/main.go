@@ -2,9 +2,11 @@ package core
 
 import (
 	"fmt"
-	"github.com/MinterTeam/minter-go-sdk/api"
-	"github.com/MinterTeam/minter-go-sdk/transaction"
-	"github.com/MinterTeam/minter-go-sdk/wallet"
+	"github.com/MinterTeam/minter-go-sdk/v2/api/grpc_client"
+	"github.com/MinterTeam/minter-go-sdk/v2/transaction"
+	"github.com/MinterTeam/minter-go-sdk/v2/wallet"
+	"github.com/MinterTeam/node-grpc-gateway/api_pb"
+	"github.com/sirupsen/logrus"
 	"io/ioutil"
 	"log"
 	"os"
@@ -69,18 +71,9 @@ func (s MinterValidatorSwitchOffService) Run() {
 }
 
 func (s MinterValidatorSwitchOffService) GenerateTx(mnemonic string) (string, error) {
-	var symbol string
 	var chainId transaction.ChainID
-	if os.Getenv("CHAIN_ID") == "1" {
-		chainId = transaction.MainNetChainID
-		symbol = "BIP"
-	} else {
-		chainId = transaction.TestNetChainID
-		symbol = "MNT"
-	}
-
 	var nonce uint64
-	var gp string
+	var gp *api_pb.MinGasPriceResponse
 	var err error
 
 	clients := s.getNoesList()
@@ -98,11 +91,6 @@ func (s MinterValidatorSwitchOffService) GenerateTx(mnemonic string) (string, er
 		} else {
 			break
 		}
-	}
-
-	gasPrice, err := strconv.ParseInt(gp, 10, 8)
-	if err != nil {
-		return "", err
 	}
 
 	data, err := transaction.NewSetCandidateOffData().SetPubKey(os.Getenv("PUB_KEY"))
@@ -125,7 +113,7 @@ func (s MinterValidatorSwitchOffService) GenerateTx(mnemonic string) (string, er
 		return "", err
 	}
 
-	tx.SetNonce(nonce).SetGasPrice(uint8(gasPrice)).SetGasCoin(symbol)
+	tx.SetNonce(nonce).SetGasPrice(uint8(gp.MinGasPrice)).SetGasCoin(0)
 	signedTx, err := tx.Sign(privateKey)
 	if err != nil {
 		return "", err
@@ -148,20 +136,25 @@ func (s MinterValidatorSwitchOffService) CreateFileWithTx(mnemonic string) error
 	return nil
 }
 
-func (s MinterValidatorSwitchOffService) getNoesList() []*api.Api {
+func (s MinterValidatorSwitchOffService) getNoesList() []*grpc_client.Client {
 	urlList := strings.Split(os.Getenv("NODES_LIST"), " ")
-	var clientsList []*api.Api
+	var clientsList []*grpc_client.Client
 
 	for _, url := range urlList {
-		clientsList = append(clientsList, api.NewApi(url))
+		nodeApi, err := grpc_client.New(url)
+		if err != nil {
+			logrus.Fatal(err)
+		}
+
+		clientsList = append(clientsList, nodeApi)
 	}
 	return clientsList
 }
 
-func (s MinterValidatorSwitchOffService) checkMissedBlocks(clients []*api.Api) bool {
-	var results []uint64
+func (s MinterValidatorSwitchOffService) checkMissedBlocks(clients []*grpc_client.Client) bool {
+	var results []int64
 
-	maxMissedBlocks, err := strconv.ParseUint(os.Getenv("MISSED_BLOCKS"), 10, 64)
+	maxMissedBlocks, err := strconv.ParseInt(os.Getenv("MISSED_BLOCKS"), 10, 64)
 	if err != nil {
 		fmt.Println(err)
 	}
@@ -171,11 +164,7 @@ func (s MinterValidatorSwitchOffService) checkMissedBlocks(clients []*api.Api) b
 		if err != nil {
 			fmt.Println(err)
 		} else {
-			count, err := strconv.ParseUint(r.MissedBlocksCount, 10, 64)
-			if err != nil {
-				fmt.Println(err)
-			}
-			results = append(results, count)
+			results = append(results, r.MissedBlocksCount)
 		}
 	}
 
@@ -188,9 +177,10 @@ func (s MinterValidatorSwitchOffService) checkMissedBlocks(clients []*api.Api) b
 	return false
 }
 
-func (s MinterValidatorSwitchOffService) sendSwitchOffTx(clients []*api.Api, tx transaction.SignedTransaction) {
+func (s MinterValidatorSwitchOffService) sendSwitchOffTx(clients []*grpc_client.Client, tx transaction.Signed) {
 	for _, client := range clients {
-		result, err := client.SendTransaction(tx)
+		txString, err := tx.Encode()
+		result, err := client.SendTransaction(txString)
 		if err != nil {
 			fmt.Println(err)
 		} else {

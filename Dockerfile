@@ -1,13 +1,15 @@
-FROM golang:1.13.5-alpine
+FROM golang:1.13.7-alpine as builder
 
+RUN apk add --no-cache make gcc musl-dev linux-headers
 WORKDIR /app
-
-COPY ./ /app
-
-RUN apk add --no-cache make gcc musl-dev linux-headers git
-
+COPY . /app
 RUN go mod download
+RUN go build -o ./builds/linux/switcher ./cmd/switch.go
 
-RUN go get github.com/githubnemo/CompileDaemon
+FROM alpine:3.7
 
-ENTRYPOINT CompileDaemon --exclude-dir=.git --build="go build -o ./builds/linux/switch ./cmd/switch.go" --command=./builds/linux/switch
+COPY --from=builder /app/builds/linux/switcher /usr/bin/switcher
+RUN addgroup minteruser && adduser -D -h /minter -G minteruser minteruser
+USER minteruser
+WORKDIR /minter
+CMD ["/usr/bin/switcher"]
