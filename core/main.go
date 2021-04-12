@@ -71,9 +71,9 @@ func (s MinterValidatorSwitchOffService) Run() {
 }
 
 func (s MinterValidatorSwitchOffService) GenerateTx(mnemonic string) (string, error) {
+	var gp *api_pb.MinGasPriceResponse
 	var chainId transaction.ChainID
 	var nonce uint64
-	var gp *api_pb.MinGasPriceResponse
 	var err error
 
 	clients := s.getNoesList()
