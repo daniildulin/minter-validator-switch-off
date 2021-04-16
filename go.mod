@@ -8,4 +8,5 @@ require (
 	github.com/joho/godotenv v1.3.0
 	github.com/sirupsen/logrus v1.8.1
 	golang.org/x/sys v0.0.0-20210415045647-66c3f260301c // indirect
+	gopkg.in/tucnak/telebot.v2 v2.3.5
 )

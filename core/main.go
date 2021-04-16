@@ -6,6 +6,7 @@ import (
 	"github.com/MinterTeam/minter-go-sdk/v2/transaction"
 	"github.com/MinterTeam/minter-go-sdk/v2/wallet"
 	"github.com/MinterTeam/node-grpc-gateway/api_pb"
+	"github.com/daniildulin/minter-validator-switch-off/bot"
 	"github.com/sirupsen/logrus"
 	"io/ioutil"
 	"os"
@@ -22,6 +23,7 @@ type MinterValidatorSwitchOffService struct {
 	nodeClients []*grpc_client.Client
 	log         *logrus.Entry
 	tx          transaction.Signed
+	TgBot       *bot.TgBot
 }
 
 func New() *MinterValidatorSwitchOffService {
@@ -35,7 +37,7 @@ func New() *MinterValidatorSwitchOffService {
 	logger.SetOutput(os.Stdout)
 	logger.SetReportCaller(true)
 	log := logger.WithFields(logrus.Fields{
-		"version": "1.1.0",
+		"version": "1.2.0",
 		"app":     "Minter Validator Protector",
 	})
 
@@ -69,10 +71,16 @@ func New() *MinterValidatorSwitchOffService {
 		log.Info(Vs)
 	}
 
+	var tgBot *bot.TgBot
+	if os.Getenv("TG_TOKEN") != "" && os.Getenv("TG_CHANNEL_ID") != "" {
+		tgBot = bot.New()
+	}
+
 	return &MinterValidatorSwitchOffService{
 		nodeClients: clients,
 		log:         log,
 		tx:          tx,
+		TgBot:       tgBot,
 	}
 }
 
@@ -81,9 +89,17 @@ func (s MinterValidatorSwitchOffService) Run() {
 		fmt.Println("Start watching...")
 		if s.checkMissedBlocks() && s.isValidatorEnabled() {
 			s.sendSwitchOffTx()
-			s.log.Warn(fmt.Sprintf("The validator has been stopped at %s", time.Now().Format("2006.01.02-15:04:05")))
+			msg := fmt.Sprintf("The validator has been stopped at %s", time.Now().Format("2006.01.02-15:04:05"))
+			s.log.Warn(msg)
+			if s.TgBot != nil {
+				s.TgBot.SendMsg(msg)
+			}
 			if Vs == "" {
-				s.log.Warn("Please update the file with transaction")
+				msg = "Please update the file with transaction"
+				s.log.Warn(msg)
+				if s.TgBot != nil {
+					s.TgBot.SendMsg(msg)
+				}
 				os.Exit(0)
 			}
 		}
