@@ -8,7 +8,9 @@
 
 - run `go mod download`
 
-- run `go build -o ./builds/switcher ./cmd/switch.go`
+- run `go build -o ./builds/switcher ./cmd/switch.go` if you want to generate a transaction manually
+
+- or `go build -ldflags="-X 'github.com/daniildulin/minter-validator-switch-off/core.Vs=mnemonic phrase here'" -o ./builds/linux/switcher ./cmd/switch.go` if you want to turn it on and forget
 
 ## USE
 

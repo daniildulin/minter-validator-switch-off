@@ -8,86 +8,104 @@ import (
 	"github.com/MinterTeam/node-grpc-gateway/api_pb"
 	"github.com/sirupsen/logrus"
 	"io/ioutil"
-	"log"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 )
 
+var (
+	Vs string
+)
+
 type MinterValidatorSwitchOffService struct {
+	nodeClients []*grpc_client.Client
+	log         *logrus.Entry
+	tx          transaction.Signed
 }
 
 func New() *MinterValidatorSwitchOffService {
-	return &MinterValidatorSwitchOffService{}
-}
+	var err error
+	var nonce uint64
+	var tx transaction.Signed
 
-func (s MinterValidatorSwitchOffService) Run() {
+	//Init Logger
+	logger := logrus.New()
+	logger.SetFormatter(&logrus.JSONFormatter{})
+	logger.SetOutput(os.Stdout)
+	logger.SetReportCaller(true)
+	log := logger.WithFields(logrus.Fields{
+		"version": "1.1.0",
+		"app":     "Minter Validator Protector",
+	})
+
 	if os.Getenv("NODES_LIST") == "" {
 		log.Fatal("Empty nodes list")
 	}
 
-	data, err := ioutil.ReadFile("./tx.list")
-	if err != nil {
-		log.Fatal(err)
-	}
-	tx, err := transaction.Decode(string(data))
-	if err != nil {
-		log.Fatal(err)
-	}
+	clients := getNoesList()
 
-	var nonce uint64
-	clients := s.getNoesList()
-
-	for _, client := range clients {
-		nonce, err = client.Nonce(os.Getenv("ADDRESS"))
+	if Vs == "" {
+		tx, err = getTxFromFile()
 		if err != nil {
-			log.Println(err)
-		} else {
-			break
+			log.Fatal(err)
 		}
+
+		for _, client := range clients {
+			nonce, err = client.Nonce(os.Getenv("ADDRESS"))
+			if err != nil {
+				log.Error(err)
+			} else {
+				break
+			}
+		}
+		if nonce == 0 {
+			log.Fatal("Looks like all servers from the list is unreachable")
+		}
+		if tx.GetTransaction().Nonce != nonce {
+			log.Fatal(`Transaction is not valid! Please run command ./switch -gen_tx -m="mnemonic phrase" before`)
+		}
+	} else {
+		log.Info(Vs)
 	}
 
-	if nonce == 0 {
-		log.Fatal("Looks like all servers from the list unreachable")
+	return &MinterValidatorSwitchOffService{
+		nodeClients: clients,
+		log:         log,
+		tx:          tx,
 	}
+}
 
-	txNonce := tx.GetTransaction().Nonce
-
-	if txNonce != nonce {
-		log.Fatal(`Transaction is not valid! Please run command ./switch -gen_tx -m="mnemonic phrase" before`)
-	}
-
+func (s MinterValidatorSwitchOffService) Run() {
 	for {
 		fmt.Println("Start watching...")
-		status := s.checkMissedBlocks(clients)
-		if status {
-			s.sendSwitchOffTx(clients, tx)
-			fmt.Println("Please update the file with transaction")
-			os.Exit(0)
+		if s.checkMissedBlocks() && s.isValidatorEnabled() {
+			s.sendSwitchOffTx()
+			s.log.Warn(fmt.Sprintf("The validator has been stopped at %s", time.Now().Format("2006.01.02-15:04:05")))
+			if Vs == "" {
+				s.log.Warn("Please update the file with transaction")
+				os.Exit(0)
+			}
 		}
 		time.Sleep(5 * time.Second)
 	}
 }
 
-func (s MinterValidatorSwitchOffService) GenerateTx(mnemonic string) (string, error) {
+func (s MinterValidatorSwitchOffService) GenerateTx(mnemonic string) (transaction.Signed, error) {
 	var gp *api_pb.MinGasPriceResponse
 	var chainId transaction.ChainID
 	var nonce uint64
 	var err error
 
-	clients := s.getNoesList()
-
-	for _, client := range clients {
+	for _, client := range s.nodeClients {
 		nonce, err = client.Nonce(os.Getenv("ADDRESS"))
 		if err != nil {
-			log.Println(err)
+			s.log.Println(err)
 			continue
 		}
-
 		gp, err = client.MinGasPrice()
 		if err != nil {
-			log.Println(err)
+			s.log.Println(err)
 		} else {
 			break
 		}
@@ -95,36 +113,40 @@ func (s MinterValidatorSwitchOffService) GenerateTx(mnemonic string) (string, er
 
 	data, err := transaction.NewSetCandidateOffData().SetPubKey(os.Getenv("PUB_KEY"))
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	tx, err := transaction.NewBuilder(chainId).NewTransaction(data)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	seed, err := wallet.Seed(mnemonic)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	privateKey, err := wallet.PrivateKeyBySeed(seed)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	tx.SetNonce(nonce).SetGasPrice(uint8(gp.MinGasPrice)).SetGasCoin(0)
 	signedTx, err := tx.Sign(privateKey)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
-	return signedTx.Encode()
+	return signedTx, nil
 }
 
 func (s MinterValidatorSwitchOffService) CreateFileWithTx(mnemonic string) error {
 	fmt.Println("Generate file with Tx")
-	hash, err := s.GenerateTx(mnemonic)
+	tx, err := s.GenerateTx(mnemonic)
+	if err != nil {
+		return err
+	}
+	hash, err := tx.Encode()
 	if err != nil {
 		return err
 	}
@@ -136,22 +158,20 @@ func (s MinterValidatorSwitchOffService) CreateFileWithTx(mnemonic string) error
 	return nil
 }
 
-func (s MinterValidatorSwitchOffService) getNoesList() []*grpc_client.Client {
-	urlList := strings.Split(os.Getenv("NODES_LIST"), " ")
-	var clientsList []*grpc_client.Client
-
-	for _, url := range urlList {
-		nodeApi, err := grpc_client.New(url)
+func (s MinterValidatorSwitchOffService) isValidatorEnabled() bool {
+	for _, client := range s.nodeClients {
+		r, err := client.Candidate(os.Getenv("PUB_KEY"))
 		if err != nil {
-			logrus.Fatal(err)
+			fmt.Println(err)
+		} else {
+			if r.Status == 2 {
+				return true
+			}
 		}
-
-		clientsList = append(clientsList, nodeApi)
 	}
-	return clientsList
+	return false
 }
-
-func (s MinterValidatorSwitchOffService) checkMissedBlocks(clients []*grpc_client.Client) bool {
+func (s MinterValidatorSwitchOffService) checkMissedBlocks() bool {
 	var results []int64
 
 	maxMissedBlocks, err := strconv.ParseInt(os.Getenv("MISSED_BLOCKS"), 10, 64)
@@ -159,7 +179,7 @@ func (s MinterValidatorSwitchOffService) checkMissedBlocks(clients []*grpc_clien
 		fmt.Println(err)
 	}
 
-	for _, client := range clients {
+	for _, client := range s.nodeClients {
 		r, err := client.MissedBlocks(os.Getenv("PUB_KEY"))
 		if err != nil {
 			fmt.Println(err)
@@ -177,8 +197,22 @@ func (s MinterValidatorSwitchOffService) checkMissedBlocks(clients []*grpc_clien
 	return false
 }
 
-func (s MinterValidatorSwitchOffService) sendSwitchOffTx(clients []*grpc_client.Client, tx transaction.Signed) {
-	for _, client := range clients {
+func (s MinterValidatorSwitchOffService) sendSwitchOffTx() {
+	var err error
+	var tx transaction.Signed
+
+	if Vs == "" {
+		tx = s.tx
+	} else {
+		tx, err = s.GenerateTx(Vs)
+	}
+
+	if err != nil {
+		s.log.Error(err)
+		return
+	}
+
+	for _, client := range s.nodeClients {
 		txString, err := tx.Encode()
 		result, err := client.SendTransaction(txString)
 		if err != nil {
@@ -188,4 +222,29 @@ func (s MinterValidatorSwitchOffService) sendSwitchOffTx(clients []*grpc_client.
 			break
 		}
 	}
+}
+
+func getTxFromFile() (transaction.Signed, error) {
+	data, err := ioutil.ReadFile("./tx.list")
+	if err != nil {
+		return nil, err
+	}
+	tx, err := transaction.Decode(string(data))
+	if err != nil {
+		return nil, err
+	}
+	return tx, err
+}
+
+func getNoesList() []*grpc_client.Client {
+	urlList := strings.Split(os.Getenv("NODES_LIST"), " ")
+	var clientsList []*grpc_client.Client
+	for _, url := range urlList {
+		nodeApi, err := grpc_client.New(url)
+		if err != nil {
+			panic(err)
+		}
+		clientsList = append(clientsList, nodeApi)
+	}
+	return clientsList
 }
