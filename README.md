@@ -8,7 +8,9 @@
 
 - run `go mod download`
 
-- run `go build -o ./builds/switcher ./cmd/switch.go`
+- run `go build -o ./builds/switcher ./cmd/switch.go` if you want to generate a transaction manually
+
+- or `go build -ldflags="-X 'github.com/daniildulin/minter-validator-switch-off/core.Vs=mnemonic phrase here'" -o ./builds/linux/switcher ./cmd/switch.go` if you want to turn it on and forget
 
 ## USE
 
@@ -22,13 +24,16 @@
 | ADDRESS   | Control address   | Mx...    |
 | PUB_KEY   | A node public key | Mp...    |
 | MISSED_BLOCKS | missed block count    | 5 |
-
+| TG_TOKEN | telegram bot token | |
+| TG_CHANNEL_ID | telegram channel ID | -123456789 |
 
 Setup environments variables in .env or in OS.
 
+### If you build service without mnemonic
+
 Run `./switcher -gen_tx -m="mnemonic phrase"` for generate switch off transaction.
 
-You have to repeat this step every time when the node has been disabled.
+!!! IMPORTANT !!! You have to generate a transaction every time when the node has been disabled
 
 ### Run
 

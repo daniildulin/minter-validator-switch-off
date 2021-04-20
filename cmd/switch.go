@@ -27,6 +27,10 @@ func main() {
 		os.Exit(0)
 	}
 
+	if os.Getenv("TG_TOKEN") != "" && os.Getenv("TG_CHANNEL_ID") != "" {
+		switcher.TgBot.Run()
+	}
+
 	switcher.Run()
 	os.Exit(0)
 }
